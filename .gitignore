@@ -2,6 +2,7 @@
 data/
 output/
 my_graph.txt
+.vscode/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
