@@ -18,12 +18,12 @@ class Edge:
         self.xy = (x, y)
         self.length = length
         self.fid = fid                              # for visualization?
+    
+    # h function
+    def h(self, end):                                    
+        return abs(self.xy[0] - end[0]) + abs(self.xy[1] - end[1])
 
 class Graph:
-    # h function
-    def h(self, start, end):                                    
-        return abs(start[0] - end[0]) + abs(start[1] - end[1])
-
     def __init__(self, file):
         self.file = None                            # graph data source
         self.nodes = {}                             # all read data
@@ -88,7 +88,7 @@ class Graph:
 
         # first node's neighbours
         for edge in self.nodes[start].edges:
-            future_h = self.h(edge.xy, end)
+            future_h = edge.h(end)
             Q[edge.xy] = edge.length + future_h, edge.length, future_h  # f, g, h for nodes added to Q - possible FUTURE S elements
             p[edge.xy] = start, edge.fid
         
@@ -114,7 +114,7 @@ class Graph:
             for edge in self.nodes[curr].edges:
                 if edge.xy not in S:
                     if edge.xy not in Q:
-                        future_h = self.h(edge.xy, end)                         # h for new node - it will never be changed
+                        future_h = edge.h(end)                         # h for new node - it will never be changed
                         future_g = curr_g + edge.length                         # g for new node                      
                         Q[edge.xy] = future_g + future_h, future_g, future_h    # f, g, h
                         p[edge.xy] = curr, edge.fid
