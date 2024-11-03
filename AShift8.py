@@ -80,17 +80,16 @@ class Graph:
     def aShift8(self, start, end):
         S = set(); S.add(start)
         Q = heapdict()
-        p = {}; p[start] = None, None                       # previous_node, previous_edge_fid
+        p = {}; p[start] = None, None                       
 
         for edge in self.nodes[start].edges:
-            h_edge = self.h(edge.xy, end)
-            Q[edge.xy] = edge.length + h_edge, h_edge       # whole_length, heuristic - the goal of storing heurisctic is to count it only once
+            future_h = self.h(edge.xy, end)
+            Q[edge.xy] = edge.length + future_h, edge.length, future_h
             p[edge.xy] = start, edge.fid
         
         # ensure loop exit when no solution
         while Q:
-            curr, (c_length, c_h) = Q.popitem()     # current_xy, (current_length_with_heuristic, current_heuristic)
-            c_length -= c_h                         # current length without heuristic - this could also be held as another atribute in Q, but is this the way???
+            curr, (curr_f, curr_g, curr_h) = Q.popitem()
             
             # if the goal is reached
             if curr == end:
@@ -102,7 +101,7 @@ class Graph:
                     fids.append(curr[1])
                 
                 node_path.reverse(); fids.reverse()
-                return node_path, fids, c_length, len(S)
+                return node_path, fids, curr_f, len(S)
             
             # add the current node to the S set
             S.add(curr)
@@ -111,14 +110,17 @@ class Graph:
                 if edge.xy not in S:
                     if edge.xy not in Q:
                         # count the heuristic - only once
-                        h_edge = self.h(edge.xy, end)                           
-                        Q[edge.xy] = c_length + edge.length + h_edge, h_edge    # whole_path_length + heuristic, heuristic
+                        future_h = self.h(edge.xy, end)
+                        future_g = curr_f + edge.length                       
+                        Q[edge.xy] = future_g + future_h, future_g, future_h    # whole_path_length + heuristic, heuristic
                         p[edge.xy] = curr, edge.fid
                     else:
-                        new_length = c_length + edge.length + Q[edge.xy][1]     # Q[edge.xy][1] - already counted heuristic
+                        new_old_h = Q[edge.xy][2]
+                        new_g = curr_g + edge.length
+                        new_f = new_g + new_old_h     # Q[edge.xy][1] - already counted heuristic
                         # relax the edge (if needed)
-                        if new_length < Q[edge.xy][0]:
-                            Q[edge.xy] = new_length, Q[edge.xy][1]    
+                        if new_f < Q[edge.xy][0]:
+                            Q[edge.xy] = new_f, new_g, new_old_h   
                             p[edge.xy] = curr, edge.fid
 
 if __name__ == '__main__':
