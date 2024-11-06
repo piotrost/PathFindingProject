@@ -128,11 +128,20 @@ class Graph:
                             p[edge.xy] = curr, edge.fid
 
 if __name__ == '__main__':
+    import time
+
     curr_directory = os.getcwd()
 
     # The test
+    t_1 = time.time()
     g = Graph(curr_directory + r'\data\L4_1_BDOT10k__OT_SKJZ_L.shp')
+    t0 = time.time()
     path, fids, length, vol_s = g.aShift8((471892, 576471),(481676, 574633))
+    t1 = time.time()
+    print(t1)
+
+    print("reading", t0-t_1, "s")
+    print("algorithm:", t1-t0, "s")
     
     # printing
     g.export_graph_txt()
