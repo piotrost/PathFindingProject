@@ -1,4 +1,5 @@
 # custom
+workspace.gdb
 data/
 output/
 my_graph.txt
