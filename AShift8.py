@@ -10,18 +10,22 @@ class Node:
     def __init__(self):                             # no need to store node's coordinates - they are keys in "nodes" dictionary
         self.edges = []                             # keys to nodes in the "nodes dictionary" + edge info
 
-    def add_edge(self, x, y, length, oid):
-        self.edges.append(Edge(x, y, length, oid))
+    def add_edge(self, x, y, length, oid, time):
+        self.edges.append(Edge(x, y, length, oid, time))
 
 class Edge:
-    def __init__(self, x, y, length, oid):
+    def __init__(self, x, y, length, oid, time):
         self.xy = (x, y)
         self.length = length
         self.oid = oid                              # for visualization?
+        self.time = time
     
     # h function
     def h(self, end):                                    
-        return abs(self.xy[0] - end[0]) + abs(self.xy[1] - end[1])
+        return abs(self.xy[0] - end[0]) + abs(self.xy[1] - end[1]) 
+    
+    def ht(self, end):
+        return abs(self.xy[0] - end[0]) + abs(self.xy[1] - end[1]) / 38.888 # / (140 * 1000 / 3600) ~ 38.(8)
 
 class Graph:
     def __init__(self, file):
@@ -34,16 +38,16 @@ class Graph:
         arcpy.management.CreateFeatureclass(arcpy.env.workspace, 'edges', 'POLYLINE')
         
         # new fields
-        field_names = ["F_POINT", "L_POINT", "LENGTH"]
-        field_types = ["TEXT", "TEXT", "DOUBLE"]
+        field_names = ["F_POINT", "L_POINT", "LENGTH", "TIME"]
+        field_types = ["TEXT", "TEXT", "DOUBLE", "DOUBLE"]
 
         # add the fields to feature class
         for field_name, field_type in zip(field_names, field_types):
             arcpy.AddField_management('edges', field_name, field_type)
 
         # copying
-        with arcpy.da.SearchCursor(arcpy.env.workspace + "\\" + file, ["OBJECTID", "SHAPE@"]) as cursor:
-            with arcpy.da.InsertCursor(arcpy.env.workspace + r'\edges', ["OBJECTID","F_POINT", "L_POINT", "LENGTH", "SHAPE@"]) as insert_cursor:
+        with arcpy.da.SearchCursor(arcpy.env.workspace + "\\" + file, ["OBJECTID", "SHAPE@", 'klasaDrogi']) as cursor:
+            with arcpy.da.InsertCursor(arcpy.env.workspace + r'\edges', ["OBJECTID","F_POINT", "L_POINT", "LENGTH", "TIME", "SHAPE@"]) as insert_cursor:
                 self.file = file                        # save graph data source path / feature class
                 temp_nodes = {}                         # store the nodes' final rounded coordinates under multiple keys
                 
@@ -54,6 +58,7 @@ class Graph:
                     first_point = shape.firstPoint      # node
                     last_point = shape.lastPoint        # second node
                     length = shape.length               # edge length
+                    speed = speed_dict.get(row[2])
 
                     xy_arr = []                         # final nodes' coordinates
                     
@@ -83,12 +88,14 @@ class Graph:
                         temp_nodes[xy] = xyf; temp_nodes[xy1] = xyf; temp_nodes[xy2] = xyf; temp_nodes[xy3] = xyf
                         xy_arr.append(xyf)
                     
+                    time = length / (speed * 1000/3600)
+
                     # create edges - in two directions and in gdb
-                    self.nodes[xy_arr[0]].add_edge(xy_arr[1][0], xy_arr[1][1], length, oid)
-                    self.nodes[xy_arr[1]].add_edge(xy_arr[0][0], xy_arr[0][1], length, oid)
-                    insert_cursor.insertRow([oid, str(xy_arr[0]), str(xy_arr[1]), length, shape])
+                    self.nodes[xy_arr[0]].add_edge(xy_arr[1][0], xy_arr[1][1], length, oid, time)
+                    self.nodes[xy_arr[1]].add_edge(xy_arr[0][0], xy_arr[0][1], length, oid, time)
+                    insert_cursor.insertRow([oid, str(xy_arr[0]), str(xy_arr[1]), length, time, shape])
     
-        arcpy.management.AddIndex('edges', ['OBJECTID'], "edges_idx", "UNIQUE") # potrzeba zrobić porządek
+        # arcpy.management.AddIndex('edges', ['OBJECTID'], "edges_idx", "UNIQUE") # czy potrzeba?
         arcpy.management.AddSpatialIndex('edges')
 
     def export_graph_txt(self):
@@ -96,13 +103,15 @@ class Graph:
             for node in self.nodes:
                 f.write(f"\n\n\t<-- {node} -->\n")
                 for edge in self.nodes[node].edges:
-                    f.write(f"{edge.xy}\t{edge.length}\t{edge.oid}\n")
+                    f.write(f"{edge.xy}\t{edge.length}\t{edge.time}\t{edge.oid}\n")
 
     def aShift8(self, start, end):
+
+
         # create data structures
         S = set(); S.add(start)
         Q = heapdict()
-        p = {}; p[start] = None, None                       
+        p = {start: (None, None)}                      
 
         # first node's neighbours
         for edge in self.nodes[start].edges:
@@ -144,8 +153,56 @@ class Graph:
                         if new_f < Q[edge.xy][0]:                               # Q[edge.xy][0] = old_f
                             Q[edge.xy] = new_f, new_g, new_old_h                # f, g, h
                             p[edge.xy] = curr, edge.oid
+    
+    def aShift8t(self, start, end):
+        # create data structures
+        S = set(); S.add(start)
+        Q = heapdict()
+        p = {start: (None, None)}                      
 
-    def export_fc(self):
+        # first node's neighbours
+        for edge in self.nodes[start].edges:
+            future_h = edge.ht(end)
+            Q[edge.xy] = edge.time + future_h, edge.time, future_h  # f, g, h for nodes added to Q - possible FUTURE S elements
+            p[edge.xy] = start, edge.oid
+        
+        # main algorithm loop
+        while Q:                                                        # ensure loop exit when no solution
+            curr, (curr_f, curr_g, curr_h) = Q.popitem()                # f, g, h of CURRENT node
+            
+            # destination reached
+            if curr == end:
+                node_path = [end]; oids = []            # create output data structures
+                curr = (end, None)                      # adjust curr for loop
+                while curr[0] != start:
+                    curr = p[curr[0]]                   # alter curr
+                    node_path.append(curr[0])           # append node
+                    oids.append(curr[1])                # append edge
+                
+                node_path.reverse(); oids.reverse()
+                return node_path, oids, curr_g, len(S)
+            
+            # add the current node to the S set
+            S.add(curr)
+
+            for edge in self.nodes[curr].edges:
+                if edge.xy not in S:
+                    if edge.xy not in Q:
+                        future_h = edge.ht(end)                         # h for new node - it will never be changed
+                        future_g = curr_g + edge.time                        # g for new node                      
+                        Q[edge.xy] = future_g + future_h, future_g, future_h    # f, g, h
+                        p[edge.xy] = curr, edge.oid
+                    else:
+                        new_old_h = Q[edge.xy][2]                               # read Q[edge.xy][2] = old_but_up_to_date_h
+                        new_g = curr_g + edge.time                              # count possibly_different_value_of_g
+                        new_f = new_g + new_old_h                               # count new f based on f and g above
+                        # relax the edge (if needed)
+                        if new_f < Q[edge.xy][0]:                               # Q[edge.xy][0] = old_f
+                            Q[edge.xy] = new_f, new_g, new_old_h                # f, g, h
+                            p[edge.xy] = curr, edge.oid
+
+
+    def export_fc(self, oids):
             # create output feature class in gdb
             arcpy.management.CreateFeatureclass(arcpy.env.workspace, 'output', 'POLYLINE')
             
@@ -173,6 +230,8 @@ class Graph:
 
             print("Creating an output feature class completed.")
 
+speed_dict = {'A': 140, 'S': 120, 'GP': 60, 'G': 50, 'Z': 40, 'L': 30, 'D': 30, 'I': 20}
+
 if __name__ == '__main__':
     curr_directory = os.getcwd()
 
@@ -190,7 +249,7 @@ if __name__ == '__main__':
     
     # algorithm
     t0 = time.time()
-    path, oids, length, vol_s = g.aShift8((471892, 576471),(481676, 574633))
+    path, oids, length, vol_s = g.aShift8t((471892, 576471),(481676, 574633))
     t1 = time.time()
 
     # printing
@@ -204,4 +263,4 @@ if __name__ == '__main__':
     print('path edges count:   ', len(oids))
     
     # visualization
-    g.export_fc()
+    g.export_fc(oids)
