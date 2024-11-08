@@ -25,3 +25,20 @@ trzymać czas i długość - nie tajemniczy koszt?
 kolejka priorytetowa - pobawimy się osobno
 tablica, czy dictionary - ważne
 kolejka priorytetowa pythona nie zmienia priorytetu - a my musimy zmieniać przy relaksacji wierzchołków - własna kolejka, albo przerobić algorytm A*, by wspierał elementy wielokrotnie włożone do środka
+
+
+# 8.11.
+heurystyka?
+mamy metryke stworzoną w systemie manhatan (że zwykłe odejmowanie xD) a trzeba zwykłą odległość wtedy pewnie zadziała
+
+snapowanie?
+do wierzchołka
+
+kierunkowość?
+z palca przed algorytmem
+
+zasięg?
+poligon tajmeny, a nieutwarzalny - Djikstra z warunkiem stopu - nie dodajemy do Q wierzchołków, które przekraczają koszt
+
+tworzenie grafu oddzielne od algorytmu?
+być może
