@@ -2,9 +2,9 @@
 # Created:  2024-11-02T22:13:28.044Z
 
 from heapdict import heapdict
-import arcpy
 import math
 import pickle
+import arcpy
 
 class Node:
     def __init__(self):                             # no need to store node's coordinates - they are keys in "nodes" dictionary
@@ -37,7 +37,7 @@ class Graph:
     def read_graph(self, featureClass, nodes_fc):
         # create output feature class in gdb
         arcpy.management.CreateFeatureclass(arcpy.env.workspace, nodes_fc, 'POINT')
-        self.nodes_fc = nodes_fc                                # save opened nodes for snapping fc name
+        self.nodes_fc = nodes_fc                                # save successfully created nodes for snapping fc name
         
         # new fields
         field_names = ["ID"]
@@ -50,7 +50,7 @@ class Graph:
         # copying
         with arcpy.da.SearchCursor(arcpy.env.workspace + "\\" + featureClass, ["OBJECTID", "SHAPE@", 'klasaDrogi']) as cursor:
             with arcpy.da.InsertCursor(arcpy.env.workspace + "\\" + self.nodes_fc, ["ID", "SHAPE@"]) as insert_cursor:
-                self.featureClass = featureClass                        # save opened graph source line fc name
+                self.featureClass = featureClass                        # save successfully opened graph source line fc name
                 temp_nodes = {}                                         # store the nodes' final rounded coordinates under multiple keys
                 
                 for row in cursor:
@@ -183,6 +183,79 @@ class Graph:
                             insert_cursor.insertRow([edge_id, first_point, last_point, shape])
 
             print(f"Creating feature class '{name}'.")
+    
+    def snap(self, start, end):
+        outside_graph = []
+        for point in [start, end]:
+            # round the coordinates in all possible ways
+            xy = (math.floor(point[0]), math.ceil(point[1]))
+            xy1 = (math.ceil(point[0]), math.floor(point[1]))
+            xy2 = (math.floor(point[0]), math.floor(point[1]))
+            xy3 = (math.ceil(point[0]), math.ceil(point[1]))
+        
+            if xy in self.nodes:
+                continue
+            elif xy1 in self.nodes:
+                continue
+            elif xy2 in self.nodes:
+                continue
+            elif xy3 in self.nodes:
+                continue
+            else:
+                outside_graph.append(xy)
+        
+        if len(outside_graph) == 0:
+            return [start, end]
+        else:
+            # create output feature class in gdb
+            arcpy.management.CreateFeatureclass(arcpy.env.workspace, "reach_graph", 'POLYLINE')
+            
+            # new fields
+            field_names = ["F_POINT", "L_POINT"]
+            field_types = ["TEXT", "TEXT"]
+
+            # add the fields to feature class
+            for field_name, field_type in zip(field_names, field_types):
+                arcpy.AddField_management("reach_graph", field_name, field_type)
+            
+            # create unsnapped points fc
+            arcpy.management.CreateFeatureclass(arcpy.env.workspace, "unsnapped_points", 'POINT')
+            with arcpy.da.InsertCursor("unsnapped_points", ["SHAPE@"]) as insert_cursor:
+                for point in outside_graph:
+                    insert_cursor.insertRow([arcpy.Point(point[0], point[1])])
+            
+            # find the nearest nodes
+            arcpy.analysis.Near("unsnapped_points", self.nodes_fc, 500, "LOCATION")
+
+            start_end_final = []
+
+            # create reach paths
+            with arcpy.da.SearchCursor("unsnapped_points", ["SHAPE", "NEAR_X", "NEAR_Y"]) as cursor:
+                with arcpy.da.InsertCursor("reach_graph", ["F_POINT", "L_POINT", "SHAPE@"]) as insert_cursor:
+                    for i, row in enumerate(cursor):
+                        shape = row[0]
+                        near_x = row[1]; near_y = row[2]
+
+                        xy = (math.floor(near_x), math.ceil(near_y))
+                        xy1 = (math.ceil(near_x), math.floor(near_y))
+                        xy2 = (math.floor(near_x), math.floor(near_y))
+                        xy3 = (math.ceil(near_x), math.ceil(near_y))
+
+                        if xy in self.nodes:
+                            start_end_final.append(xy)
+                            insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(start), arcpy.Polyline(arcpy.Point(shape[0], shape[1]), arcpy.Point(xy[0], xy[1]))])
+                        elif xy1 in self.nodes:
+                            start_end_final.append(xy1)
+                            insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(start), arcpy.Polyline(arcpy.Point(shape[0], shape[1]), arcpy.Point(xy1[0], xy1[1]))])
+                        elif xy2 in self.nodes:
+                            start_end_final.append(xy2)
+                            insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(start), arcpy.Polyline(arcpy.Point(shape[0], shape[1]), arcpy.Point(xy2[0], xy2[1]))])
+                        elif xy3 in self.nodes:
+                            start_end_final.append(xy3)
+                            insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(start), arcpy.Polyline(arcpy.Point(shape[0], shape[1]), arcpy.Point(xy3[0], xy3[1]))])
+                        
+                
+                return start_end_final
 
 def read_launcher(workspace_gdb, featureClass, nodes_fc='nodes', graph_file="graph.pkl", srid='ETRF2000-PL CS92'):
     # arcpy gdb settings
@@ -190,102 +263,96 @@ def read_launcher(workspace_gdb, featureClass, nodes_fc='nodes', graph_file="gra
     arcpy.env.overwriteOutput = True
     arcpy.env.outputCoordinateSystem = arcpy.SpatialReference(srid)
 
+    # create graph
     g = Graph(featureClass, nodes_fc)
 
     # save graph with pickle
     with open(graph_file, 'wb') as f:
         pickle.dump(g, f)
 
-def aS8_launcher(workspace_gdb, mode, start, stop, featureClass=None, nodes_fc=None, srid='ETRF2000-PL CS92'):
+def aS8_launcher(workspace_gdb, in_mode, start, end, featureClass=None, nodes_fc=None, graph_file="graph.pkl", srid='ETRF2000-PL CS92'):
     # arcpy gdb settings
     arcpy.env.workspace = workspace_gdb
     arcpy.env.overwriteOutput = True
     arcpy.env.outputCoordinateSystem = arcpy.SpatialReference(srid)
 
-    t0 = time.time()
-
     # read graph with pickle
-    with open('graph.pkl', 'rb') as f:
+    with open(graph_file, 'rb') as f:
         g: Graph = pickle.load(f)
     
-    # correct gdb feature classes if needed
+    # correct gdb feature classes names if needed
     if featureClass:
         g.featureClass = featureClass
     if nodes_fc:
         g.nodes_fc = nodes_fc
     
-    if mode == "shortest":
-        cost_field = "length"
-        h_funct = "h_length"
-    elif mode == "fastest":
-        cost_field = "time"
-        h_funct = "h_time"
+    # modes
+    if in_mode == "both":
+        mode_arr = ["shortest", "fastest"]
+    else:
+        mode_arr = [in_mode]
+    
+    # snap
+    start_end_list = g.snap((471882, 576481), (481666, 574643))
+    start = start_end_list[0]
+    end = start_end_list[1]
+    
+    # algorithm
+    for mode in mode_arr:
+        # parameters for AShift8
+        if mode == "shortest":
+            cost_field = "length"
+            h_funct = h_length
+        elif in_mode == "fastest":
+            cost_field = "time"
+            h_funct = h_time
+        
+        # AShift8
+        path, edge_ids, cost, vol_S = g.aShift8(cost_field, h_funct, start, end)
 
-    path, edge_ids, cost, vol_S = g.aShift8(cost_field, h_funct, start, stop)
-
-    t1 = time.time()
-
-    print(f"algorithm {mode} + pickle load: ", t1-t0, "s")
-    print("volume of S:        ", vol_S)
-    if mode == "shortest":
-        print("length of the road: ", cost / 1000, "km")
-    elif mode == "fastest":
-        print("time of the road:   ", cost / 60, "min")
-    print('path vertices count:', len(path))
-    print('path edges count:   ', len(edge_ids))
-    g.export_fc(edge_ids, f"output_{mode}")
-    print("\n")
+        # printing
+        if in_mode == "shortest":
+            print("length of the road:    ", cost / 1000, "km")
+        elif in_mode == "fastest":
+            print("time of the road:    ", cost / 60, "min")
+        print("volume of S:    ", vol_S)
+        print('path vertices count:', len(path))
+        print('path edges count:   ', len(edge_ids))
+        
+        # output
+        g.export_fc(edge_ids, f"output_{mode}")
+        print("\n")
 
 speed_dict = {'A': 140, 'S': 120, 'GP': 60, 'G': 50, 'Z': 40, 'L': 30, 'D': 30, 'I': 20}
 
 if __name__ == '__main__':
     import time
+    import sys
     import os
-
     curr_directory = os.getcwd()
     workspace = curr_directory + r"\workspace.gdb"
 
-    # reading
-    tr0 = time.time()
-    read_launcher(workspace, 'SKJZ_L_Torun_m')
-    tr1 = time.time()
-    print("reading: ", tr1-tr0, "s\n")
+    # WHOLE PROCESS
+    if len(sys.argv) == 1:
+        t0 = time.time()
+        read_launcher(workspace, 'SKJZ_L_Torun_m')
+        aS8_launcher(workspace, "both", (471892, 576471), (481676, 574633))
+        t1 = time.time()
+        print("time all: ", t1-t0, "s\n")
 
-    # algorithm
-    aS8_launcher(workspace, "shortest", (471892, 576471), (481676, 574633))
-
-    # # reading
-    # tr0 = time.time()
-    # g = Graph('SKJZ_L_Torun_m')
-    # tr1 = time.time()
-    # print("reading: ", tr1-tr0, "s\n")
+    # GRAPH READING
+    elif sys.argv[1] == "r":
+        t0 = time.time()
+        read_launcher(workspace, 'SKJZ_L_Torun_m')
+        t1 = time.time()
+        print("time reading: ", t1-t0, "s\n")
     
-    # # algorithm shortest
-    # t0 = time.time()
-    # path, edge_ids, cost, vol_S = g.aShift8("length", h_length, (471892, 576471),(481676, 574633))
-    # t1 = time.time()
-    # print("algorithm shortest: ", t1-t0, "s")
-    # print( "volume of S:        ", vol_S)
-    # print("length of the road: ", cost / 1000, "km")
-    # print('path vertices count:', len(path))
-    # print('path edges count:   ', len(edge_ids))
-    # g.export_fc(edge_ids, "output_shortest")
-    # print("\n")
-
-    # # algorithm fastest
-    # t0 = time.time()
-    # path, edge_ids, cost, vol_S = g.aShift8("time", h_time, (471892, 576471),(481676, 574633))
-    # t1 = time.time()
-    # print("algorithm fastest:  ", t1-t0, "s")
-    # print( "volume of S:        ", vol_S)
-    # print("time of the road:   ", cost / 60, "min")
-    # print('path vertices count:', len(path))
-    # print('path edges count:   ', len(edge_ids))
-    # g.export_fc(edge_ids, "output_fastest")
-    # print("\n")
-    
-    # # export graph to txt
-    # g.export_graph_txt()
-    
+    # ALGORITHM + VISUALIZATION
+    elif sys.argv[1] == "a":
+        t0 = time.time()
+        aS8_launcher(workspace, "both", (471892, 576471), (481676, 574633))
+        t1 = time.time()
+        print("time algorithm + visualization: ", t1-t0, "s\n")
+        
     
     
