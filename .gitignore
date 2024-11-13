@@ -1,5 +1,6 @@
 # custom
 workspace.gdb
+graph.pkl
 data/
 output/
 my_graph.txt
