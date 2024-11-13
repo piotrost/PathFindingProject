@@ -185,6 +185,16 @@ class Graph:
             print(f"Creating feature class '{name}'.")
     
     def snap(self, start, end):
+        try:
+            arcpy.Delete_management("reach_graph")
+        except:
+            pass
+        
+        try:
+            arcpy.Delete_management("unsnapped_points")
+        except:
+            pass
+
         outside_graph = []
         for point in [start, end]:
             # round the coordinates in all possible ways
@@ -243,16 +253,16 @@ class Graph:
 
                         if xy in self.nodes:
                             start_end_final.append(xy)
-                            insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(start), arcpy.Polyline(arcpy.Point(shape[0], shape[1]), arcpy.Point(xy[0], xy[1]))])
+                            insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(xy), arcpy.Polyline(arcpy.Array([arcpy.Point(shape[0], shape[1]), arcpy.Point(near_x, near_y)]))])
                         elif xy1 in self.nodes:
                             start_end_final.append(xy1)
-                            insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(start), arcpy.Polyline(arcpy.Point(shape[0], shape[1]), arcpy.Point(xy1[0], xy1[1]))])
+                            insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(xy1), arcpy.Polyline(arcpy.Array([arcpy.Point(shape[0], shape[1]), arcpy.Point(near_x, near_y)]))])
                         elif xy2 in self.nodes:
                             start_end_final.append(xy2)
-                            insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(start), arcpy.Polyline(arcpy.Point(shape[0], shape[1]), arcpy.Point(xy2[0], xy2[1]))])
+                            insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(xy2), arcpy.Polyline(arcpy.Array([arcpy.Point(shape[0], shape[1]), arcpy.Point(near_x, near_y)]))])
                         elif xy3 in self.nodes:
                             start_end_final.append(xy3)
-                            insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(start), arcpy.Polyline(arcpy.Point(shape[0], shape[1]), arcpy.Point(xy3[0], xy3[1]))])
+                            insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(xy3), arcpy.Polyline(arcpy.Array([arcpy.Point(shape[0], shape[1]), arcpy.Point(near_x, near_y)]))])
                         
                 
                 return start_end_final
@@ -293,7 +303,7 @@ def aS8_launcher(workspace_gdb, in_mode, start, end, featureClass=None, nodes_fc
         mode_arr = [in_mode]
     
     # snap
-    start_end_list = g.snap((471882, 576481), (481666, 574643))
+    start_end_list = g.snap(start, end)
     start = start_end_list[0]
     end = start_end_list[1]
     
@@ -303,7 +313,7 @@ def aS8_launcher(workspace_gdb, in_mode, start, end, featureClass=None, nodes_fc
         if mode == "shortest":
             cost_field = "length"
             h_funct = h_length
-        elif in_mode == "fastest":
+        elif mode == "fastest":
             cost_field = "time"
             h_funct = h_time
         
@@ -311,9 +321,9 @@ def aS8_launcher(workspace_gdb, in_mode, start, end, featureClass=None, nodes_fc
         path, edge_ids, cost, vol_S = g.aShift8(cost_field, h_funct, start, end)
 
         # printing
-        if in_mode == "shortest":
+        if mode == "shortest":
             print("length of the road:    ", cost / 1000, "km")
-        elif in_mode == "fastest":
+        elif mode == "fastest":
             print("time of the road:    ", cost / 60, "min")
         print("volume of S:    ", vol_S)
         print('path vertices count:', len(path))
@@ -336,7 +346,7 @@ if __name__ == '__main__':
     if len(sys.argv) == 1:
         t0 = time.time()
         read_launcher(workspace, 'SKJZ_L_Torun_m')
-        aS8_launcher(workspace, "both", (471892, 576471), (481676, 574633))
+        aS8_launcher(workspace, "both", (471882.5, 576481.5), (481666.5, 574643.5))
         t1 = time.time()
         print("time all: ", t1-t0, "s\n")
 
@@ -350,7 +360,7 @@ if __name__ == '__main__':
     # ALGORITHM + VISUALIZATION
     elif sys.argv[1] == "a":
         t0 = time.time()
-        aS8_launcher(workspace, "both", (471892, 576471), (481676, 574633))
+        aS8_launcher(workspace, "both", (471882.5, 576481.5), (481666.5, 574643.5))
         t1 = time.time()
         print("time algorithm + visualization: ", t1-t0, "s\n")
         
