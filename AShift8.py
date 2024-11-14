@@ -29,29 +29,19 @@ def h_time(current, end):
 
 class Graph:
     def __init__(self, featureClass, nodes_fc):
-        self.featureClass = None                                # graph source line fc name
-        self.nodes_fc = None                                    # nodes for snapping fc name
+        self.featureClass = featureClass                        # graph source line fc name
+        self.nodes_fc = nodes_fc                                # nodes for snapping fc name
         self.nodes = {}                                         # the nodes - core data structure for A*
-        self.read_graph(featureClass, nodes_fc)
+        self.generate_graph()
     
-    def read_graph(self, featureClass, nodes_fc):
-        # create output feature class in gdb
-        arcpy.management.CreateFeatureclass(arcpy.env.workspace, nodes_fc, 'POINT')
-        self.nodes_fc = nodes_fc                                # save successfully created nodes for snapping fc name
-        
-        # new fields
-        field_names = ["ID"]
-        field_types = ["TEXT"]
+    def generate_graph(self):
+        # create output nodes feature class in gdb - for snapping only
+        arcpy.management.CreateFeatureclass(arcpy.env.workspace, self.nodes_fc, 'POINT')
 
-        # add the fields to feature class
-        for field_name, field_type in zip(field_names, field_types):
-            arcpy.AddField_management(nodes_fc, field_name, field_type)
-
-        # copying
-        with arcpy.da.SearchCursor(arcpy.env.workspace + "\\" + featureClass, ["OBJECTID", "SHAPE@", 'klasaDrogi']) as cursor:
-            with arcpy.da.InsertCursor(arcpy.env.workspace + "\\" + self.nodes_fc, ["ID", "SHAPE@"]) as insert_cursor:
-                self.featureClass = featureClass                        # save successfully opened graph source line fc name
-                temp_nodes = {}                                         # store the nodes' final rounded coordinates under multiple keys
+        # create graph
+        with arcpy.da.SearchCursor(arcpy.env.workspace + "\\" + self.featureClass, ["OBJECTID", "SHAPE@", 'klasaDrogi']) as cursor:
+            with arcpy.da.InsertCursor(arcpy.env.workspace + "\\" + self.nodes_fc, ["SHAPE@"]) as insert_cursor:
+                temp_nodes = {}                         # store the nodes' final rounded coordinates under multiple keys
                 
                 for row in cursor:
                     edge_id = row[0]                    # edge OBJECTID   
@@ -73,21 +63,14 @@ class Graph:
                         xy1 = (math.ceil(coords[0]), math.floor(coords[1]))
                         xy2 = (math.floor(coords[0]), math.floor(coords[1]))
                         xy3 = (math.ceil(coords[0]), math.ceil(coords[1]))
-                    
-                        if xy in temp_nodes:
-                            xyf = temp_nodes[xy]        # get the final rounded coordinates
-                        elif xy1 in temp_nodes:
-                            xyf = temp_nodes[xy1]       # -----||-----
-                        elif xy2 in temp_nodes:
-                            xyf = temp_nodes[xy2]       # -----||-----
-                        elif xy3 in temp_nodes:
-                            xyf = temp_nodes[xy3]       # -----||-----
-                        else:
-                            self.nodes[xy] = Node()     # create a new node
-                            xyf = xy                    # set final rounded coordinates
-                            
-                            # insert the node into gdb
-                            insert_cursor.insertRow([str(xyf), point])
+
+                        for i, cr in enumerate([xy, xy1, xy2, xy3]):
+                            if cr in temp_nodes:
+                                xyf = temp_nodes[cr]
+                            elif i == 3:
+                                self.nodes[xy] = Node()             # create a new node
+                                xyf = xy                            # set final rounded coordinates
+                                insert_cursor.insertRow([point])    # insert the node into gdb
                         
                         # all possible coordinate keys leed to the same rounded one
                         temp_nodes[xy] = xyf; temp_nodes[xy1] = xyf; temp_nodes[xy2] = xyf; temp_nodes[xy3] = xyf
@@ -179,56 +162,41 @@ class Graph:
                             first_point = "(" + str(first_point.X) + ", " + str(first_point.Y) + ")"
                             last_point = shape.lastPoint
                             last_point = "(" + str(last_point.X) + ", " + str(last_point.Y) + ")"
-
+                            
                             insert_cursor.insertRow([edge_id, first_point, last_point, shape])
 
             print(f"Creating feature class '{name}'.")
     
     def snap(self, start, end):
+        # delete previous snap feature classes
         try:
             arcpy.Delete_management("reach_graph")
         except:
             pass
-        
         try:
             arcpy.Delete_management("unsnapped_points")
         except:
             pass
-
-        outside_graph = []
-        for point in [start, end]:
-            # round the coordinates in all possible ways
+        
+        # check for prescence in the graph
+        outside_graph = []; start_end_final = [None, None]
+        for j, point in enumerate([start, end]):
             xy = (math.floor(point[0]), math.ceil(point[1]))
             xy1 = (math.ceil(point[0]), math.floor(point[1]))
             xy2 = (math.floor(point[0]), math.floor(point[1]))
             xy3 = (math.ceil(point[0]), math.ceil(point[1]))
+
+            for j, cr in enumerate([xy, xy1, xy2, xy3]):
+                if cr in self.nodes:
+                    start_end_final[j] = cr; break
+                elif j == 3:
+                    outside_graph.append(point)
         
-            if xy in self.nodes:
-                continue
-            elif xy1 in self.nodes:
-                continue
-            elif xy2 in self.nodes:
-                continue
-            elif xy3 in self.nodes:
-                continue
-            else:
-                outside_graph.append(xy)
-        
+        # if both points are in the graph
         if len(outside_graph) == 0:
             return [start, end]
-        else:
-            # create output feature class in gdb
-            arcpy.management.CreateFeatureclass(arcpy.env.workspace, "reach_graph", 'POLYLINE')
-            
-            # new fields
-            field_names = ["F_POINT", "L_POINT"]
-            field_types = ["TEXT", "TEXT"]
-
-            # add the fields to feature class
-            for field_name, field_type in zip(field_names, field_types):
-                arcpy.AddField_management("reach_graph", field_name, field_type)
-            
-            # create unsnapped points fc
+        else:         
+            # create unsnapped_points temporary fc
             arcpy.management.CreateFeatureclass(arcpy.env.workspace, "unsnapped_points", 'POINT')
             with arcpy.da.InsertCursor("unsnapped_points", ["SHAPE@"]) as insert_cursor:
                 for point in outside_graph:
@@ -237,9 +205,16 @@ class Graph:
             # find the nearest nodes
             arcpy.analysis.Near("unsnapped_points", self.nodes_fc, 500, "LOCATION")
 
-            start_end_final = []
+            # create output reach_graph feature class in gdb
+            arcpy.management.CreateFeatureclass(arcpy.env.workspace, "reach_graph", 'POLYLINE')
+            
+            field_names = ["F_POINT", "L_POINT"]
+            field_types = ["TEXT", "TEXT"]
 
-            # create reach paths
+            for field_name, field_type in zip(field_names, field_types):
+                arcpy.AddField_management("reach_graph", field_name, field_type)
+
+            # insert output into reach_graph
             with arcpy.da.SearchCursor("unsnapped_points", ["SHAPE", "NEAR_X", "NEAR_Y"]) as cursor:
                 with arcpy.da.InsertCursor("reach_graph", ["F_POINT", "L_POINT", "SHAPE@"]) as insert_cursor:
                     for i, row in enumerate(cursor):
@@ -251,19 +226,17 @@ class Graph:
                         xy2 = (math.floor(near_x), math.floor(near_y))
                         xy3 = (math.ceil(near_x), math.ceil(near_y))
 
-                        if xy in self.nodes:
-                            start_end_final.append(xy)
-                            insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(xy), arcpy.Polyline(arcpy.Array([arcpy.Point(shape[0], shape[1]), arcpy.Point(near_x, near_y)]))])
-                        elif xy1 in self.nodes:
-                            start_end_final.append(xy1)
-                            insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(xy1), arcpy.Polyline(arcpy.Array([arcpy.Point(shape[0], shape[1]), arcpy.Point(near_x, near_y)]))])
-                        elif xy2 in self.nodes:
-                            start_end_final.append(xy2)
-                            insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(xy2), arcpy.Polyline(arcpy.Array([arcpy.Point(shape[0], shape[1]), arcpy.Point(near_x, near_y)]))])
-                        elif xy3 in self.nodes:
-                            start_end_final.append(xy3)
-                            insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(xy3), arcpy.Polyline(arcpy.Array([arcpy.Point(shape[0], shape[1]), arcpy.Point(near_x, near_y)]))])
-                        
+                        insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(cr), arcpy.Polyline(arcpy.Array([arcpy.Point(shape[0], shape[1]), arcpy.Point(near_x, near_y)]))])
+
+                        for cr in [xy, xy1, xy2, xy3]:
+                            if cr in self.nodes:
+                                if len(outside_graph) == 2:
+                                    start_end_final[i] = cr
+                                else:
+                                    for j, item in enumerate(start_end_final):
+                                        if item == None:
+                                            start_end_final[j] = cr
+                                break
                 
                 return start_end_final
 
@@ -336,9 +309,8 @@ def aS8_launcher(workspace_gdb, in_mode, start, end, featureClass=None, nodes_fc
 speed_dict = {'A': 140, 'S': 120, 'GP': 60, 'G': 50, 'Z': 40, 'L': 30, 'D': 30, 'I': 20}
 
 if __name__ == '__main__':
-    import time
-    import sys
-    import os
+    # for testing
+    import os, sys, time
     curr_directory = os.getcwd()
     workspace = curr_directory + r"\workspace.gdb"
 
