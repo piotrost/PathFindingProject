@@ -48,7 +48,7 @@ class Graph:
         arcpy.management.CreateFeatureclass(arcpy.env.workspace, self.nodes_fc, 'POINT')
 
         # create graph
-        with arcpy.da.SearchCursor(arcpy.env.workspace + "\\" + self.data_fc, ["OBJECTID", "SHAPE@", 'klasaDrogi']) as cursor:
+        with arcpy.da.SearchCursor(arcpy.env.workspace + "\\" + self.data_fc, ["OBJECTID", "SHAPE@", 'KLASA_DROG']) as cursor:
             with arcpy.da.InsertCursor(arcpy.env.workspace + "\\" + self.nodes_fc, ["SHAPE@"]) as insert_cursor:
                 temp_nodes = {}                         # store the nodes' final rounded coordinates under multiple keys
                 
@@ -226,7 +226,7 @@ class Graph:
                         line = arcpy.Polyline(arcpy.Array([arcpy.Point(shape[0], shape[1]), arcpy.Point(near_x, near_y)]))
                         insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(cr), line])
                         length += line.length
-                        time += line.length / (speed_dict['I'] * 1000/3600)
+                        time += line.length / (speed_dict['droga wewnętrzna'] * 1000/3600)
 
                         # start and end last possible modification
                         xy, xy1, xy2, xy3 = round_coords((near_x, near_y))
@@ -302,7 +302,7 @@ def aS8_launcher(out_mode, start, end, output_name = "output", in_data_fc=None, 
         g.export_fc(edge_ids, output_name + "_" + mode)
         print("\n")
 
-speed_dict = {'A': 140, 'S': 120, 'GP': 60, 'G': 50, 'Z': 40, 'L': 30, 'D': 30, 'I': 20}
+speed_dict = {'autostrada': 140, 'droga ekspresowa': 120, 'droga główna ruchu przyśpieszonego': 60, 'droga główna': 50, 'droga zbiorcza': 40, 'droga lokalna': 30, 'droga dojazdowa': 30, 'droga wewnętrzna': 20}
 
 if __name__ == '__main__':
     # for testing
