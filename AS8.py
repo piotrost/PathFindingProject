@@ -250,16 +250,21 @@ def generate_launcher(in_data_fc, out_nodes_fc='nodes', out_graph_file="graph.pk
     with open(out_graph_file, 'wb') as f:
         pickle.dump(g, f)
 
-def aS8_launcher(out_mode, start, end, output_name = "output", in_data_fc=None, in_nodes_fc=None, in_graph_file="graph.pkl"):
-    # read graph with pickle
-    with open(in_graph_file, 'rb') as f:
-        g: Graph = pickle.load(f)
+def aS8_launcher(out_mode, start, end, output_name = "output", in_data_fc=None, nodes_fc=None, in_graph_file="graph.pkl", create_new_graph=False):
+    if create_new_graph:
+        if nodes_fc == None:
+            nodes_fc = "nodes"
+        g = Graph(in_data_fc, nodes_fc)
+    else:
+        # read graph with pickle
+        with open(in_graph_file, 'rb') as f:
+            g: Graph = pickle.load(f)
     
-    # correct gdb feature classes names if needed
-    if in_data_fc:
-        g.data_fc = in_data_fc
-    if in_nodes_fc:
-        g.nodes_fc = in_nodes_fc
+        # correct gdb feature classes names if needed
+        if in_data_fc:
+            g.data_fc = in_data_fc
+        if nodes_fc:
+            g.nodes_fc = nodes_fc
     
     # modes
     if out_mode == "both":
@@ -318,8 +323,14 @@ if __name__ == '__main__':
     # WHOLE PROCESS
     if len(sys.argv) == 1:
         t0 = time.time()
-        generate_launcher('SKJZ_L_Torun_m', 'nodes', "graph.pkl")
-        aS8_launcher("both", (471882.5, 576481.5), (481666.5, 574643.5), "output", "SKJZ_L_Torun_m", "nodes", "graph.pkl")
+        aS8_launcher(
+            out_mode="both",
+            start=(471337.576, 577701.85),
+            end=(473585, 567628.5),
+            output_name="output",
+            in_data_fc="SKJZ_L_Torun_m",
+            create_new_graph=True
+        )
         t1 = time.time()
         print("time all: ", t1-t0, "s\n")
 
@@ -343,7 +354,7 @@ if __name__ == '__main__':
             end=(473585, 567628.5),
             output_name="output",
             in_data_fc="SKJZ_L_Torun_m",
-            in_nodes_fc="nodes",
+            nodes_fc="nodes",
             in_graph_file="graph.pkl"
         )
         t1 = time.time()
