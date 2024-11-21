@@ -37,56 +37,50 @@ def round_coords(coords):
     return xy, xy1, xy2, xy3
 
 class Graph:
-    def __init__(self, data_fc, nodes_fc):
+    def __init__(self, data_fc):
         self.data_fc = data_fc                        # graph source line fc name
-        self.nodes_fc = nodes_fc                      # nodes for snapping fc name
         self.nodes = {}                               # the nodes - core data structure for A*
         self.generate_graph()
     
     def generate_graph(self):
-        # create output nodes feature class in gdb - for snapping only
-        arcpy.management.CreateFeatureclass(arcpy.env.workspace, self.nodes_fc, 'POINT')
-
         # create graph
         with arcpy.da.SearchCursor(arcpy.env.workspace + "\\" + self.data_fc, ["OBJECTID", "SHAPE@", 'KLASA_DROG']) as cursor:
-            with arcpy.da.InsertCursor(arcpy.env.workspace + "\\" + self.nodes_fc, ["SHAPE@"]) as insert_cursor:
-                temp_nodes = {}                         # store the nodes' final rounded coordinates under multiple keys
+            temp_nodes = {}                         # store the nodes' final rounded coordinates under multiple keys
+            
+            for row in cursor:
+                edge_id = row[0]                    # edge OBJECTID   
+                shape = row[1]                      # edge geometry
+
+                first_point = shape.firstPoint      # node
+                last_point = shape.lastPoint        # second node
+                length = shape.length               # edge length
+                speed = speed_dict[row[2]]          # route speed
+
+                xy_arr = []                         # final nodes' coordinates
                 
-                for row in cursor:
-                    edge_id = row[0]                    # edge OBJECTID   
-                    shape = row[1]                      # edge geometry
+                for point in [first_point, last_point]:
+                    coords = (point.X, point.Y)                 # raw coords
+                    xy, xy1, xy2, xy3 = round_coords(coords)    # rounded coords
 
-                    first_point = shape.firstPoint      # node
-                    last_point = shape.lastPoint        # second node
-                    length = shape.length               # edge length
-                    speed = speed_dict[row[2]]          # route speed
-
-                    xy_arr = []                         # final nodes' coordinates
+                    for i, cr in enumerate([xy, xy1, xy2, xy3]):
+                        if cr in temp_nodes:
+                            xyf = temp_nodes[cr]
+                        elif i == 3:
+                            self.nodes[xy] = Node()             # create a new node
+                            xyf = xy                            # set final rounded coordinates
                     
-                    for point in [first_point, last_point]:
-                        coords = (point.X, point.Y)                 # raw coords
-                        xy, xy1, xy2, xy3 = round_coords(coords)    # rounded coords
+                    # all possible coordinate keys leed to the same rounded one
+                    temp_nodes[xy] = xyf; temp_nodes[xy1] = xyf; temp_nodes[xy2] = xyf; temp_nodes[xy3] = xyf
+                    xy_arr.append(xyf)
+                
+                # edge time
+                time = length / (speed * 1000/3600)
 
-                        for i, cr in enumerate([xy, xy1, xy2, xy3]):
-                            if cr in temp_nodes:
-                                xyf = temp_nodes[cr]
-                            elif i == 3:
-                                self.nodes[xy] = Node()             # create a new node
-                                xyf = xy                            # set final rounded coordinates
-                                insert_cursor.insertRow([point])    # insert the node into gdb
-                        
-                        # all possible coordinate keys leed to the same rounded one
-                        temp_nodes[xy] = xyf; temp_nodes[xy1] = xyf; temp_nodes[xy2] = xyf; temp_nodes[xy3] = xyf
-                        xy_arr.append(xyf)
-                    
-                    # edge time
-                    time = length / (speed * 1000/3600)
-
-                    # create edges - in two directions and in gdb
-                    self.nodes[xy_arr[0]].add_edge(xy_arr[1][0], xy_arr[1][1], edge_id, length, time)
-                    self.nodes[xy_arr[1]].add_edge(xy_arr[0][0], xy_arr[0][1], edge_id, length, time)
+                # create edges - in two directions and in gdb
+                self.nodes[xy_arr[0]].add_edge(xy_arr[1][0], xy_arr[1][1], edge_id, length, time)
+                self.nodes[xy_arr[1]].add_edge(xy_arr[0][0], xy_arr[0][1], edge_id, length, time)
     
-        arcpy.management.AddSpatialIndex(self.nodes_fc)
+        arcpy.management.AddSpatialIndex(self.data_fc)
 
     def export_graph_txt(self):
         with open("my_graph.txt", "w") as f:
@@ -177,7 +171,7 @@ class Graph:
             # both points are in the graph
             return [start, end], length, time
         else:        
-            # create unsnapped_points temporary fc
+            # create unsnapped_points fc
             arcpy.management.CreateFeatureclass(arcpy.env.workspace, "ends_outside_graph", 'POINT')
             with arcpy.da.InsertCursor("ends_outside_graph", ["SHAPE@"]) as insert_cursor:
                 for point in outside_graph:
@@ -186,21 +180,25 @@ class Graph:
             # find the nearest edges
             arcpy.analysis.Near("ends_outside_graph", self.data_fc, 500, "LOCATION")
 
+            # get the nearest edges' OBJECTIDs and outside graph points' shapes
             near_line_fids = []; out_point_shapes = []
             with arcpy.da.SearchCursor("ends_outside_graph", ["NEAR_FID", "SHAPE@"]) as cursor:
                 for row in cursor:
                     near_line_fids.append(row[0])
                     out_point_shapes.append(row[1])
 
+            # get the nearest edges' shapes
             edge_shapes_dict = {}; edge_shapes = []                        
             filter = f"OBJECTID IN (SELECT NEAR_FID FROM ends_outside_graph)"
             with arcpy.da.SearchCursor(self.data_fc, ["OBJECTID", "SHAPE@"], filter) as edge_cursor:
                 for edge_row in edge_cursor:
                     edge_shapes_dict[edge_row[0]] = edge_row[1]
             
+            # sort the edge shapes
             for i, fid in enumerate(near_line_fids):
                 edge_shapes.append(edge_shapes_dict[fid])
 
+            # update the NEAR_X and NEAR_Y in outside graph points
             with arcpy.da.UpdateCursor("ends_outside_graph", ["NEAR_X", "NEAR_Y"]) as update_cursor:
                 k = 0
                 for row in update_cursor:
@@ -251,29 +249,25 @@ class Graph:
 
                 return start_end_final, length, time
 
-def generate_launcher(in_data_fc, out_nodes_fc='nodes', out_graph_file="graph.pkl"):
+def generate_launcher(in_data_fc, out_graph_file="graph.pkl"):
     # create graph
-    g = Graph(in_data_fc, out_nodes_fc)
+    g = Graph(in_data_fc)
 
     # save graph with pickle
     with open(out_graph_file, 'wb') as f:
         pickle.dump(g, f)
 
-def aS8_launcher(out_mode, start, end, output_name = "output", in_data_fc=None, nodes_fc=None, in_graph_file="graph.pkl", create_new_graph=False):
+def aS8_launcher(out_mode, start, end, output_name = "output", in_data_fc=None, in_graph_file="graph.pkl", create_new_graph=False):
     if create_new_graph:
-        if nodes_fc == None:
-            nodes_fc = "nodes"
-        g = Graph(in_data_fc, nodes_fc)
+        g = Graph(in_data_fc)
     else:
         # read graph with pickle
         with open(in_graph_file, 'rb') as f:
             g: Graph = pickle.load(f)
     
-        # correct gdb feature classes names if needed
+        # correct gdb feature class name
         if in_data_fc:
             g.data_fc = in_data_fc
-        if nodes_fc:
-            g.nodes_fc = nodes_fc
     
     # modes
     if out_mode == "both":
@@ -348,7 +342,6 @@ if __name__ == '__main__':
         t0 = time.time()
         generate_launcher(
             in_data_fc='SKJZ_L_Torun_m',
-            out_nodes_fc='nodes',
             out_graph_file="graph.pkl"
         )
         t1 = time.time()
@@ -363,7 +356,6 @@ if __name__ == '__main__':
             end=(473585, 567628.5),
             output_name="output",
             in_data_fc="SKJZ_L_Torun_m",
-            nodes_fc="nodes",
             in_graph_file="graph.pkl"
         )
         t1 = time.time()
