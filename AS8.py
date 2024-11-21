@@ -142,33 +142,12 @@ class Graph:
                             Q[edge.id] = new_f, new_g, new_old_h                # f, g, h
                             p[edge.id] = curr, edge.edge_id
 
-    def export_fc(self, oids, name):
-            # create output feature class in gdb
-            arcpy.management.CreateFeatureclass(arcpy.env.workspace, name, 'POLYLINE')
-            
-            # new fields
-            field_names = ["EDGE_ID","F_POINT", "L_POINT"]
-            field_types = ["INTEGER", "TEXT", "TEXT"]
+    def export_fc(self, oids, name):           
+            filter = f"OBJECTID IN ({', '.join(str(oid) for oid in oids)})"
+            edges = arcpy.management.SelectLayerByAttribute(self.data_fc, "NEW_SELECTION", filter)
+            arcpy.management.CopyFeatures(edges, name)
 
-            # add the fields to feature class
-            for field_name, field_type in zip(field_names, field_types):
-                arcpy.AddField_management(name, field_name, field_type)
-
-            # copying
-            with arcpy.da.SearchCursor(self.data_fc, ["OBJECTID", "SHAPE@"]) as cursor:
-                with arcpy.da.InsertCursor(arcpy.env.workspace + r'\\' + name, ["EDGE_ID","F_POINT", "L_POINT", "SHAPE@"]) as insert_cursor:
-                    for row in cursor:
-                        if row[0] in oids:
-                            edge_id = row[0]
-                            shape = row[1]
-                            first_point = shape.firstPoint
-                            first_point = "(" + str(first_point.X) + ", " + str(first_point.Y) + ")"
-                            last_point = shape.lastPoint
-                            last_point = "(" + str(last_point.X) + ", " + str(last_point.Y) + ")"
-                            
-                            insert_cursor.insertRow([edge_id, first_point, last_point, shape])
-
-            print(f"Creating feature class '{name}'.")
+            print(f"Created feature class '{name}'.")
     
     def snap(self, start, end):
         # delete previous snap feature classes
@@ -204,8 +183,38 @@ class Graph:
                 for point in outside_graph:
                     insert_cursor.insertRow([arcpy.Point(point[0], point[1])])
             
-            # find the nearest nodes
-            arcpy.analysis.Near("ends_outside_graph", self.nodes_fc, 500, "LOCATION")
+            # find the nearest edges
+            arcpy.analysis.Near("ends_outside_graph", self.data_fc, 500, "LOCATION")
+
+            near_line_fids = []; out_point_shapes = []
+            with arcpy.da.SearchCursor("ends_outside_graph", ["NEAR_FID", "SHAPE@"]) as cursor:
+                for row in cursor:
+                    near_line_fids.append(row[0])
+                    out_point_shapes.append(row[1])
+
+            edge_shapes_dict = {}; edge_shapes = []                        
+            filter = f"OBJECTID IN (SELECT NEAR_FID FROM ends_outside_graph)"
+            with arcpy.da.SearchCursor(self.data_fc, ["OBJECTID", "SHAPE@"], filter) as edge_cursor:
+                for edge_row in edge_cursor:
+                    edge_shapes_dict[edge_row[0]] = edge_row[1]
+            
+            for i, fid in enumerate(near_line_fids):
+                edge_shapes.append(edge_shapes_dict[fid])
+
+            with arcpy.da.UpdateCursor("ends_outside_graph", ["NEAR_X", "NEAR_Y"]) as update_cursor:
+                k = 0
+                for row in update_cursor:
+                    out_point_shape = out_point_shapes[k]
+                    edge_shape = edge_shapes[k]
+                    first_point = edge_shape.firstPoint
+                    last_point = edge_shape.lastPoint
+
+                    if out_point_shape.distanceTo(first_point) < out_point_shape.distanceTo(last_point):
+                        update_cursor.updateRow([first_point.X, first_point.Y])
+                    else:
+                        update_cursor.updateRow([last_point.X, last_point.Y])
+                    k += 1
+                    
 
             # create output reach_graph feature class in gdb
             arcpy.management.CreateFeatureclass(arcpy.env.workspace, "reach_graph", 'POLYLINE')
@@ -220,11 +229,11 @@ class Graph:
             with arcpy.da.SearchCursor("ends_outside_graph", ["SHAPE", "NEAR_X", "NEAR_Y"]) as cursor:
                 with arcpy.da.InsertCursor("reach_graph", ["F_POINT", "L_POINT", "SHAPE@"]) as insert_cursor:
                     for i, row in enumerate(cursor):
-                        shape = row[0]
+                        out_point_shape = row[0]
                         near_x = row[1]; near_y = row[2]
                         
-                        line = arcpy.Polyline(arcpy.Array([arcpy.Point(shape[0], shape[1]), arcpy.Point(near_x, near_y)]))
-                        insert_cursor.insertRow(["(" + str(shape[0]) + "," + str(shape[1]) + ")" , str(cr), line])
+                        line = arcpy.Polyline(arcpy.Array([arcpy.Point(out_point_shape[0], out_point_shape[1]), arcpy.Point(near_x, near_y)]))
+                        insert_cursor.insertRow(["(" + str(out_point_shape[0]) + "," + str(out_point_shape[1]) + ")" , str(cr), line])
                         length += line.length
                         time += line.length / (speed_dict['droga wewnętrzna'] * 1000/3600)
 
