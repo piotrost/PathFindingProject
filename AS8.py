@@ -44,12 +44,13 @@ class Graph:
     
     def generate_graph(self):
         # create graph
-        with arcpy.da.SearchCursor(arcpy.env.workspace + "\\" + self.data_fc, ["OBJECTID", "SHAPE@", 'KLASA_DROG']) as cursor:
+        with arcpy.da.SearchCursor(arcpy.env.workspace + "\\" + self.data_fc, ["OBJECTID", "SHAPE@", 'KLASA_DROG', 'DIRECTION']) as cursor:
             temp_nodes = {}                         # store the nodes' final rounded coordinates under multiple keys
             
             for row in cursor:
                 edge_id = row[0]                    # edge OBJECTID   
                 shape = row[1]                      # edge geometry
+                direction = row[3]                  # edge direction
 
                 first_point = shape.firstPoint      # node
                 last_point = shape.lastPoint        # second node
@@ -76,9 +77,11 @@ class Graph:
                 # edge time
                 time = length / (speed * 1000/3600)
 
-                # create edges - in two directions and in gdb
-                self.nodes[xy_arr[0]].add_edge(xy_arr[1][0], xy_arr[1][1], edge_id, length, time)
-                self.nodes[xy_arr[1]].add_edge(xy_arr[0][0], xy_arr[0][1], edge_id, length, time)
+                # create edges - based on direction attribute
+                if direction == "both" or direction == "ftl":
+                    self.nodes[xy_arr[0]].add_edge(xy_arr[1][0], xy_arr[1][1], edge_id, length, time)
+                if direction == "both" or direction == "ltf":
+                    self.nodes[xy_arr[1]].add_edge(xy_arr[0][0], xy_arr[0][1], edge_id, length, time)
     
         arcpy.management.AddSpatialIndex(self.data_fc)
 
@@ -328,8 +331,8 @@ if __name__ == '__main__':
         t0 = time.time()
         aS8_launcher(
             out_mode="both",
-            start=(471337.576, 577701.85),
-            end=(473585, 567628.5),
+            start=(479332.19, 574394.85),
+            end=(476853.27, 572431.04),
             output_name="output",
             in_data_fc="SKJZ_L_Torun_m",
             create_new_graph=True
