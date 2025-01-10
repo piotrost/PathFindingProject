@@ -37,53 +37,59 @@ def round_coords(coords):
     return xy, xy1, xy2, xy3
 
 class Graph:
-    def __init__(self, data_fc):
+    def __init__(self, data_fc, driver=None):
         self.data_fc = data_fc                        # graph source line fc name
         self.nodes = {}                               # the nodes - core data structure for A*
-        self.generate_graph()
+        self.generate_graph(driver)
     
-    def generate_graph(self):
-        # create graph
-        with arcpy.da.SearchCursor(arcpy.env.workspace + "\\" + self.data_fc, ["OBJECTID", "SHAPE@", 'KLASA_DROG', 'DIRECTION']) as cursor:
-            temp_nodes = {}                         # store the nodes' final rounded coordinates under multiple keys
-            
-            for row in cursor:
-                edge_id = row[0]                    # edge OBJECTID   
-                shape = row[1]                      # edge geometry
-                direction = row[3]                  # edge direction
-
-                first_point = shape.firstPoint      # node
-                last_point = shape.lastPoint        # second node
-                length = shape.length               # edge length
-                speed = speed_dict[row[2]]          # route speed
-
-                xy_arr = []                         # final nodes' coordinates
-                
-                for point in [first_point, last_point]:
-                    coords = (point.X, point.Y)                 # raw coords
-                    xy, xy1, xy2, xy3 = round_coords(coords)    # rounded coords
-
-                    for i, cr in enumerate([xy, xy1, xy2, xy3]):
-                        if cr in temp_nodes:
-                            xyf = temp_nodes[cr]
-                        elif i == 3:
-                            self.nodes[xy] = Node()             # create a new node
-                            xyf = xy                            # set final rounded coordinates
+    def generate_graph(self, driver):
+        with driver.session(database="neo4j") as session:
+            def tarnsaction_funct(tx):
+                # create graph
+                with arcpy.da.SearchCursor(arcpy.env.workspace + "\\" + self.data_fc, ["OBJECTID", "SHAPE@", 'KLASA_DROG', 'DIRECTION']) as cursor:
+                    temp_nodes = {}                         # store the nodes' final rounded coordinates under multiple keys
                     
-                    # all possible coordinate keys leed to the same rounded one
-                    temp_nodes[xy] = xyf; temp_nodes[xy1] = xyf; temp_nodes[xy2] = xyf; temp_nodes[xy3] = xyf
-                    xy_arr.append(xyf)
-                
-                # edge time
-                time = length / (speed * 1000/3600)
+                    for row in cursor:
+                        edge_id = row[0]                    # edge OBJECTID   
+                        shape = row[1]                      # edge geometry
+                        direction = row[3]                  # edge direction
 
-                # create edges - based on direction attribute
-                if direction == "both" or direction == "ftl":
-                    self.nodes[xy_arr[0]].add_edge(xy_arr[1][0], xy_arr[1][1], edge_id, length, time)
-                if direction == "both" or direction == "ltf":
-                    self.nodes[xy_arr[1]].add_edge(xy_arr[0][0], xy_arr[0][1], edge_id, length, time)
-    
-        arcpy.management.AddSpatialIndex(self.data_fc)
+                        first_point = shape.firstPoint      # node
+                        last_point = shape.lastPoint        # second node
+                        length = shape.length               # edge length
+                        speed = speed_dict[row[2]]          # route speed
+
+                        xy_arr = []                         # final nodes' coordinates
+                        
+                        for point in [first_point, last_point]:
+                            coords = (point.X, point.Y)                 # raw coords
+                            xy, xy1, xy2, xy3 = round_coords(coords)    # rounded coords
+
+                            for i, cr in enumerate([xy, xy1, xy2, xy3]):
+                                if cr in temp_nodes:
+                                    xyf = temp_nodes[cr]
+                                elif i == 3:
+                                    self.nodes[xy] = Node()             # create a new node
+                                    tx.run("CREATE (:Node {x: $x, y: $y})", x=xy[0], y=xy[1])
+                                    xyf = xy                            # set final rounded coordinates
+                            
+                            # all possible coordinate keys leed to the same rounded one
+                            temp_nodes[xy] = xyf; temp_nodes[xy1] = xyf; temp_nodes[xy2] = xyf; temp_nodes[xy3] = xyf
+                            xy_arr.append(xyf)
+                        
+                        # edge time
+                        time = length / (speed * 1000/3600)
+
+                        # create edges - based on direction attribute
+                        if direction == "both" or direction == "ftl":
+                            self.nodes[xy_arr[0]].add_edge(xy_arr[1][0], xy_arr[1][1], edge_id, length, time)
+                            tx.run("MATCH (a:Node), (b:Node) WHERE a.x = $x1 AND a.y = $y1 AND b.x = $x2 AND b.y = $y2 CREATE (a)-[:Edge {edge_id: $edge_id, length: $length, time: $time}]->(b)", x1=xy_arr[0][0], y1=xy_arr[0][1], x2=xy_arr[1][0], y2=xy_arr[1][1], edge_id=edge_id, length=length, time=time)
+                        if direction == "both" or direction == "ltf":
+                            self.nodes[xy_arr[1]].add_edge(xy_arr[0][0], xy_arr[0][1], edge_id, length, time)
+                            tx.run("MATCH (a:Node), (b:Node) WHERE a.x = $x1 AND a.y = $y1 AND b.x = $x2 AND b.y = $y2 CREATE (a)-[:Edge {edge_id: $edge_id, length: $length, time: $time}]->(b)", x1=xy_arr[1][0], y1=xy_arr[1][1], x2=xy_arr[0][0], y2=xy_arr[0][1], edge_id=edge_id, length=length, time=time)
+                arcpy.management.AddSpatialIndex(self.data_fc)
+            
+            session.execute_write(tarnsaction_funct)
 
     def export_graph_txt(self):
         with open("my_graph.txt", "w") as f:
@@ -260,9 +266,9 @@ def generate_launcher(in_data_fc, out_graph_file="graph.pkl"):
     with open(out_graph_file, 'wb') as f:
         pickle.dump(g, f)
 
-def aS8_launcher(out_mode, start, end, output_name = "output", in_data_fc=None, in_graph_file="graph.pkl", create_new_graph=False):
+def aS8_launcher(out_mode, start, end, output_name = "output", in_data_fc=None, in_graph_file="graph.pkl", create_new_graph=False, driver=None):
     if create_new_graph:
-        g = Graph(in_data_fc)
+        g = Graph(in_data_fc, driver)
     else:
         # read graph with pickle
         with open(in_graph_file, 'rb') as f:
@@ -326,43 +332,63 @@ if __name__ == '__main__':
     arcpy.env.overwriteOutput = True
     arcpy.env.outputCoordinateSystem = arcpy.SpatialReference('ETRF2000-PL CS92')
 
-    # WHOLE PROCESS
-    if len(sys.argv) == 1:
-        t0 = time.time()
-        aS8_launcher(
-            out_mode="both",
-            start=(479332.19, 574394.85),
-            end=(476853.27, 572431.04),
-            output_name="output",
-            in_data_fc="SKJZ_L_Torun_m",
-            create_new_graph=True
-        )
-        t1 = time.time()
-        print("time all: ", t1-t0, "s\n")
+    from neo4j import GraphDatabase
 
-    # GRAPH GENERATING
-    elif sys.argv[1] == "g":
-        t0 = time.time()
-        generate_launcher(
-            in_data_fc='SKJZ_L_Torun_m',
-            out_graph_file="graph.pkl"
-        )
-        t1 = time.time()
-        print("time generating: ", t1-t0, "s\n")
+    # URI examples: "neo4j://localhost", "neo4j+s://xxx.databases.neo4j.io"
+    URI = "bolt://localhost:7687"
+    AUTH = ("neo4j", "HelloThere")
+
+    with GraphDatabase.driver(URI, auth=AUTH) as driver:
+        driver.verify_connectivity()
     
-    # ALGORITHM + VISUALIZATION
-    elif sys.argv[1] == "a":
-        t0 = time.time()
-        aS8_launcher(
-            out_mode="both",
-            start=(471337.576, 577701.85),
-            end=(473585, 567628.5),
-            output_name="output",
-            in_data_fc="SKJZ_L_Torun_m",
-            in_graph_file="graph.pkl"
-        )
-        t1 = time.time()
-        print("time algorithm + visualization: ", t1-t0, "s\n")
+        summary = driver.execute_query(
+            "CREATE (:Person {name: $name})",
+            name="Alice",
+            database_="neo4j",
+        ).summary
+        print("Created {nodes_created} nodes in {time} ms.".format(
+            nodes_created=summary.counters.nodes_created,
+            time=summary.result_available_after
+        ))
+
+        # WHOLE PROCESS
+        if len(sys.argv) == 1:
+            t0 = time.time()
+            aS8_launcher(
+                out_mode="both",
+                start=(479332.19, 574394.85),
+                end=(476853.27, 572431.04),
+                output_name="output",
+                in_data_fc="SKJZ_L_Torun_m",
+                create_new_graph=True,
+                driver=driver
+            )
+            t1 = time.time()
+            print("time all: ", t1-t0, "s\n")
+
+        # GRAPH GENERATING
+        elif sys.argv[1] == "g":
+            t0 = time.time()
+            generate_launcher(
+                in_data_fc='SKJZ_L_Torun_m',
+                out_graph_file="graph.pkl"
+            )
+            t1 = time.time()
+            print("time generating: ", t1-t0, "s\n")
+        
+        # ALGORITHM + VISUALIZATION
+        elif sys.argv[1] == "a":
+            t0 = time.time()
+            aS8_launcher(
+                out_mode="both",
+                start=(471337.576, 577701.85),
+                end=(473585, 567628.5),
+                output_name="output",
+                in_data_fc="SKJZ_L_Torun_m",
+                in_graph_file="graph.pkl",
+            )
+            t1 = time.time()
+            print("time algorithm + visualization: ", t1-t0, "s\n")
         
     
     
