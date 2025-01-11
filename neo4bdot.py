@@ -5,7 +5,8 @@ from neo4j import GraphDatabase
 speed_dict = {'autostrada': 140, 'droga ekspresowa': 120, 'droga główna ruchu przyśpieszonego': 60, 'droga główna': 50,
               'droga zbiorcza': 40, 'droga lokalna': 30, 'droga dojazdowa': 30, 'droga wewnętrzna': 20}
 
-node_geom_index = """CREATE POINT INDEX node_geom_index
+# boundaries are whole 2180 epsg boundaries
+create_node_geom_index = """CREATE POINT INDEX node_geom_index
 FOR (n:Node) ON (n.geom)
 OPTIONS {
   indexConfig: {
@@ -28,6 +29,7 @@ def round_coords(coords):
     
     return xy, xy1, xy2, xy3
 
+# utworzenie grafu w Neo4j
 def generate_graph(file_path, driver):
     with driver.session(database="neo4j") as session:
         def tarnsaction_funct(tx):
@@ -53,7 +55,9 @@ def generate_graph(file_path, driver):
                                 xyf = temp_nodes[cr]                # współrzędne, dla których w poprzednich iteracjach już utworzono węzeł
                                 break
                             elif i == 3:
-                                tx.run("CREATE (:Node {x: $x, y: $y, geom: point({x: $x, y: $y, srid $srid})})", x=xy[0], y=xy[1], srid="2180")             # utworzenie nowego nietymczasowego węzła
+                                # utworzenie nowego nietymczasowego węzła
+                                tx.run("CREATE (:Node {geom: point({x: $x, y: $y, srid: $srid})})", x=xy[0], y=xy[1], srid=7203)  # srid=7203 - neo4j tak określa układ kartezjański bez wysokości
+                                                                                                                                                           
                                 xyf = xy                            # współrzędne utworzonego węzła
                         
                         # wszystkie klucze w słowniku tymczasowym wskazują na ten sam węzeł
@@ -68,27 +72,29 @@ def generate_graph(file_path, driver):
                     
                     # utworzenie krawędzi z uwzględnieniem kierunkowości dróg
                     if direction == "both" or direction == "ftl":
-                        tx.run("MATCH (a:Node), (b:Node) WHERE a.x = $x1 AND a.y = $y1 AND b.x = $x2 AND b.y = $y2 CREATE (a)-[:Edge {edge_id: $edge_id, length: $length, time: $time}]->(b)",
+                        tx.run("MATCH (a:Node), (b:Node) WHERE a.geom.x = $x1 AND a.geom.y = $y1 AND b.geom.x = $x2 AND b.geom.y = $y2 CREATE (a)-[:Edge {edge_id: $edge_id, length: $length, time: $time}]->(b)",
                             x1=xy_arr[0][0], y1=xy_arr[0][1], x2=xy_arr[1][0], y2=xy_arr[1][1], edge_id=edge_id, length=length, time=time
                         )
                     if direction == "both" or direction == "ltf":
-                        tx.run("MATCH (a:Node), (b:Node) WHERE a.x = $x1 AND a.y = $y1 AND b.x = $x2 AND b.y = $y2 CREATE (a)-[:Edge {edge_id: $edge_id, length: $length, time: $time}]->(b)",
+                        tx.run("MATCH (a:Node), (b:Node) WHERE a.geom.x = $x1 AND a.geom.y = $y1 AND b.geom.x = $x2 AND b.geom.y = $y2 CREATE (a)-[:Edge {edge_id: $edge_id, length: $length, time: $time}]->(b)",
                             x1=xy_arr[1][0], y1=xy_arr[1][1], x2=xy_arr[0][0], y2=xy_arr[0][1], edge_id=edge_id, length=length, time=time
                         )
         
-        # result = session.execute_write(tarnsaction_funct)
-        session.run(node_geom_index)
+        # wykonanie transakcji
+        session.execute_write(tarnsaction_funct)
+        print("Graph created successfully.")
+        session.run(create_node_geom_index)
+        print("Spatial index created successfully.")
 
 if __name__ == "__main__":
     URI = "bolt://localhost:7687"
     AUTH = ("neo4j", "HelloThere")
     SHAPEFILE = r"data/nowy_SKJZ_L/torun/nowy_SKJZ_L_Torun_edited.shp"
+    
     with GraphDatabase.driver(URI, auth=AUTH) as driver:
         try:
             driver.verify_connectivity()
         except Exception as e:
-            print("DB Connection error: ", e)
+            print("Neo4j Connection error: ", e)
         
-        generate_graph(SHAPEFILE, driver)
-        
-        
+        generate_graph(SHAPEFILE, driver)     
