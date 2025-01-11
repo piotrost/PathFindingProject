@@ -45,6 +45,7 @@ class Graph:
     def generate_graph(self, driver):
         with driver.session(database="neo4j") as session:
             def tarnsaction_funct(tx):
+                edge_counter = 0
                 # create graph
                 with arcpy.da.SearchCursor(arcpy.env.workspace + "\\" + self.data_fc, ["OBJECTID", "SHAPE@", 'KLASA_DROG', 'DIRECTION']) as cursor:
                     temp_nodes = {}                         # store the nodes' final rounded coordinates under multiple keys
@@ -84,10 +85,13 @@ class Graph:
                         if direction == "both" or direction == "ftl":
                             self.nodes[xy_arr[0]].add_edge(xy_arr[1][0], xy_arr[1][1], edge_id, length, time)
                             tx.run("MATCH (a:Node), (b:Node) WHERE a.x = $x1 AND a.y = $y1 AND b.x = $x2 AND b.y = $y2 CREATE (a)-[:Edge {edge_id: $edge_id, length: $length, time: $time}]->(b)", x1=xy_arr[0][0], y1=xy_arr[0][1], x2=xy_arr[1][0], y2=xy_arr[1][1], edge_id=edge_id, length=length, time=time)
+                            edge_counter += 1
                         if direction == "both" or direction == "ltf":
                             self.nodes[xy_arr[1]].add_edge(xy_arr[0][0], xy_arr[0][1], edge_id, length, time)
                             tx.run("MATCH (a:Node), (b:Node) WHERE a.x = $x1 AND a.y = $y1 AND b.x = $x2 AND b.y = $y2 CREATE (a)-[:Edge {edge_id: $edge_id, length: $length, time: $time}]->(b)", x1=xy_arr[1][0], y1=xy_arr[1][1], x2=xy_arr[0][0], y2=xy_arr[0][1], edge_id=edge_id, length=length, time=time)
+                            edge_counter += 1
                 arcpy.management.AddSpatialIndex(self.data_fc)
+                print(f"Created {edge_counter} edges. and {len(self.nodes)} nodes.")
             
             session.execute_write(tarnsaction_funct)
 
@@ -340,16 +344,6 @@ if __name__ == '__main__':
 
     with GraphDatabase.driver(URI, auth=AUTH) as driver:
         driver.verify_connectivity()
-    
-        summary = driver.execute_query(
-            "CREATE (:Person {name: $name})",
-            name="Alice",
-            database_="neo4j",
-        ).summary
-        print("Created {nodes_created} nodes in {time} ms.".format(
-            nodes_created=summary.counters.nodes_created,
-            time=summary.result_available_after
-        ))
 
         # WHOLE PROCESS
         if len(sys.argv) == 1:
