@@ -1,0 +1,51 @@
+MATCH (source:Node)-[r:Edge]->(target:Node)
+RETURN gds.graph.project(
+ 'LengthGraph',
+ source,
+ target,
+ { relationshipProperties: r { .length } }
+)
+
+MATCH (source:Node), (target:Node) WHERE source.geom.x = 472620 AND source.geom.y = 571629 AND target.geom.x = 472094 AND target.geom.y = 571702
+CALL gds.shortestPath.dijkstra.stream('LengthGraph', {
+ sourceNode: source,
+ targetNodes: target,
+ relationshipWeightProperty: 'length'
+})
+YIELD index, sourceNode, targetNode, totalCost, nodeIds, costs, path
+RETURN
+ index,
+ gds.util.asNode(sourceNode).geom AS sourceNodeGeom,
+ gds.util.asNode(targetNode).geom AS targetNodeGeom,
+ totalCost,
+ [nodeId IN nodeIds | gds.util.asNode(nodeId).geom] AS nodeGeom,
+ costs,
+ nodes(path) as path
+ORDER BY index
+
+
+
+MATCH (source:Node)-[r:Edge]->(target:Node)
+RETURN gds.graph.project(
+ 'TimeGraph',
+ source,
+ target,
+ { relationshipProperties: r { .time } }
+)
+
+MATCH (source:Node), (target:Node) WHERE source.geom.x = 472620 AND source.geom.y = 571629 AND target.geom.x = 472094 AND target.geom.y = 571702
+CALL gds.shortestPath.dijkstra.stream('TimeGraph', {
+ sourceNode: source,
+ targetNodes: target,
+ relationshipWeightProperty: 'time'
+})
+YIELD index, sourceNode, targetNode, totalCost, nodeIds, costs, path
+RETURN
+ index,
+ gds.util.asNode(sourceNode).geom AS sourceNodeGeom,
+ gds.util.asNode(targetNode).geom AS targetNodeGeom,
+ totalCost,
+ [nodeId IN nodeIds | gds.util.asNode(nodeId).geom] AS nodeGeom,
+ costs,
+ nodes(path) as path
+ORDER BY index
